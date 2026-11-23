@@ -202,7 +202,25 @@ object SolverEngine {
             listOf(it[0], it[1], it[2], it[3])
         }
 
-        val n    = detectN(bmp, gx1, gy1, gx2, gy2)
+        // Find N by trying candidates: pick where uniqueColors == N
+        val initN = detectN(bmp, gx1, gy1, gx2, gy2)
+        var bestN = initN; var bestDiff = Int.MAX_VALUE
+        for (tryN in 7..12) {
+            val cell0 = (gx2 - gx1) / tryN; val q0 = cell0 / 5
+            val rawC = Array(tryN) { r -> Array(tryN) { c ->
+                val cx = gx1 + c * cell0 + cell0 / 2
+                val cy = gy1 + r * cell0 + cell0 / 2
+                sampleCell(bmp, cx, cy, q0)
+            }}
+            val uniq = mutableListOf<Triple<Int,Int,Int>>()
+            for (row in rawC) for (col in row)
+                if (uniq.none { colorDist(col, it) < 55f }) uniq += col
+            val diff = kotlin.math.abs(uniq.size - tryN)
+            if (diff < bestDiff) { bestDiff = diff; bestN = tryN }
+            if (diff == 0) break
+        }
+
+        val n    = bestN
         val cell = (gx2 - gx1) / n
         val q    = cell / 5
 
