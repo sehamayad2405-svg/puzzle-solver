@@ -19,7 +19,6 @@ object SolverEngine {
 
     private val BEIGE = doubleArrayOf(237.0, 228.0, 215.0)
     private val WHITE = doubleArrayOf(255.0, 255.0, 255.0)
-    private const val COLOR_MERGE = 40.0
 
     private fun pixDist(r: Double, g: Double, b: Double, ref: DoubleArray): Double {
         val dr = r - ref[0]; val dg = g - ref[1]; val db = b - ref[2]
@@ -107,7 +106,7 @@ object SolverEngine {
         // Enforce square grid: N×N grid has equal width and height
         val gw2 = result[2] - result[0]
         val gh2 = result[3] - result[1]
-        if (gh2 > gw2 * 1.15) {
+        if (gh2 > gw2 * Config.squareCropRatio) {
             // Too tall — crop height to match width (extra height = UI below grid)
             result[3] = result[1] + gw2
             Log.w(TAG, "Grid was non-square (${gw2}x${gh2}), cropped to square")
@@ -342,24 +341,25 @@ object SolverEngine {
 
         val edgeN = detectNFromEdges(rgb, gx1, gy1, gx2, bounds[3])
         val dotN  = countProgressDots(rgb, gy1)
-        // Trust dotN only if it's close to edgeN (within 3); otherwise it's a false detection
+        // Trust dotN only if it's close to edgeN; otherwise it's a false detection
         val initN = when {
-            dotN == null                    -> edgeN
-            edgeN == dotN                   -> edgeN
-            abs(edgeN - dotN) <= 3          -> dotN
-            else                            -> edgeN
+            dotN == null                                   -> edgeN
+            edgeN == dotN                                  -> edgeN
+            abs(edgeN - dotN) <= Config.dotNTolerance      -> dotN
+            else                                           -> edgeN
         }
         Log.i(TAG, "N detection: edgeN=$edgeN  dotN=$dotN  → initN=$initN")
 
+        Log.i(TAG, "Config: ${Config.summary()}")
         var bestN = initN; var bestDiff = Int.MAX_VALUE
-        for (tryN in 6..13) {
+        for (tryN in Config.nMin..Config.nMax) {
             val cs = gw / tryN; val q = cs / 5
             val raw = Array(tryN) { r -> Array(tryN) { c ->
                 val cx = gx1 + c * cs + cs / 2
                 val cy = gy1 + r * cs + cs / 2
                 sampleCell(rgb, cx, cy, q)
             }}
-            val (_, colGrid) = clusterColors(raw, tryN, COLOR_MERGE)
+            val (_, colGrid) = clusterColors(raw, tryN, Config.colorMerge.toDouble())
             val nColors = colGrid.flatMap { it.toList() }.toSet().size
             val diff = abs(nColors - tryN)
             Log.d(TAG, "tryN=$tryN  uniqueColors=$nColors  diff=$diff  cellSize=${cs}px")
@@ -375,7 +375,7 @@ object SolverEngine {
             val cy = gy1 + r * cs + cs / 2
             sampleCell(rgb, cx, cy, q)
         }}
-        val (centers, colorGrid) = clusterColors(raw, bestN, COLOR_MERGE)
+        val (centers, colorGrid) = clusterColors(raw, bestN, Config.colorMerge.toDouble())
         // Log the detected grid so you can verify rows/columns in logcat
         for (r in 0 until bestN)
             Log.i(TAG, "row[$r]: ${colorGrid[r].toList()}")

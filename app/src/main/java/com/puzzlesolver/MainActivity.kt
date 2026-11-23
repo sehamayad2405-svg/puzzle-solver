@@ -23,6 +23,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         OpenCVLoader.initLocal()
+        Config.init(this)
         setContentView(R.layout.activity_main)
 
         tvStatus  = findViewById(R.id.tvStatus)

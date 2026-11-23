@@ -10,8 +10,10 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.*
+import android.text.InputType
 import android.view.*
 import android.widget.*
+import androidx.appcompat.app.AlertDialog
 import androidx.core.app.NotificationCompat
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -38,6 +40,7 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         isRunning = true
+        Config.init(this)
         createNotificationChannel()
         startForeground(1, buildNotification("Puzzle Solver running"))
         addOverlay()
@@ -109,12 +112,29 @@ class OverlayService : Service() {
             setPadding(4, 4, 4, 4)
         }
 
+        // Top row: SOLVE + ⚙ settings button
+        val topRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+
         val btn = Button(this).apply {
             text = "SOLVE"
             setBackgroundColor(Color.parseColor("#4CAF50"))
             setTextColor(Color.WHITE)
             textSize = 12f
         }
+
+        val cfgBtn = Button(this).apply {
+            text = "⚙"
+            setBackgroundColor(Color.parseColor("#555555"))
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        topRow.addView(btn)
+        topRow.addView(cfgBtn)
 
         statusText = TextView(this).apply {
             text = "No screenshot perm!"
@@ -124,7 +144,7 @@ class OverlayService : Service() {
             setPadding(4, 2, 4, 2)
         }
 
-        layout.addView(btn)
+        layout.addView(topRow)
         layout.addView(statusText)
 
         val params = WindowManager.LayoutParams(
@@ -156,8 +176,70 @@ class OverlayService : Service() {
             if (!solving.get()) triggerSolve()
         }
 
+        cfgBtn.setOnClickListener { showConfigDialog(params, layout) }
+
         windowManager?.addView(layout, params)
         overlayView = layout
+    }
+
+    private fun showConfigDialog(overlayParams: WindowManager.LayoutParams, overlayView: View) {
+        // Must allow focus to show dialog keyboard
+        overlayParams.flags = overlayParams.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+        windowManager?.updateViewLayout(overlayView, overlayParams)
+
+        fun field(label: String, value: String) = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(8, 4, 8, 4)
+            addView(TextView(this@OverlayService).apply {
+                text = label; textSize = 13f; minWidth = 200
+                setTextColor(Color.BLACK)
+            })
+            addView(EditText(this@OverlayService).apply {
+                setText(value)
+                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+                tag = label
+                minWidth = 160
+            })
+        }
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16, 16, 16, 8)
+            val sv = ScrollView(this@OverlayService)
+            val inner = LinearLayout(this@OverlayService).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(field("colorMerge", Config.colorMerge.toString()))
+                addView(field("nMin", Config.nMin.toString()))
+                addView(field("nMax", Config.nMax.toString()))
+                addView(field("squareCropRatio", Config.squareCropRatio.toString()))
+                addView(field("dotNTolerance", Config.dotNTolerance.toString()))
+            }
+            sv.addView(inner)
+            addView(sv)
+        }
+
+        val dialog = AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog)
+            .setTitle("Solver Config")
+            .setView(container)
+            .setPositiveButton("Save") { _, _ ->
+                fun et(label: String) = container.findViewWithTag<EditText>(label)?.text?.toString()
+                et("colorMerge")?.toFloatOrNull()?.let { Config.colorMerge = it }
+                et("nMin")?.toIntOrNull()?.let { Config.nMin = it }
+                et("nMax")?.toIntOrNull()?.let { Config.nMax = it }
+                et("squareCropRatio")?.toFloatOrNull()?.let { Config.squareCropRatio = it }
+                et("dotNTolerance")?.toIntOrNull()?.let { Config.dotNTolerance = it }
+                setStatus("Config saved!")
+            }
+            .setNegativeButton("Cancel", null)
+            .setNeutralButton("Reset") { _, _ -> Config.reset(); setStatus("Config reset") }
+            .create()
+
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        dialog.setOnDismissListener {
+            overlayParams.flags = overlayParams.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            windowManager?.updateViewLayout(overlayView, overlayParams)
+        }
+        dialog.show()
     }
 
     private fun setStatus(msg: String) {
