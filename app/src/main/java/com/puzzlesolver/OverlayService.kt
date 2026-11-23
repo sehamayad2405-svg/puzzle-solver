@@ -56,21 +56,33 @@ class OverlayService : Service() {
                 val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 val mp = mgr.getMediaProjection(code, data)
                 if (mp != null) {
-                    mediaProjection = mp
                     if (android.os.Build.VERSION.SDK_INT >= 34) {
                         mp.registerCallback(object : MediaProjection.Callback() {
                             override fun onStop() {
                                 mediaProjection = null
-                                setStatus("Perm revoked")
+                                virtualDisplay?.release(); virtualDisplay = null
+                                imageReader?.close(); imageReader = null
+                                setStatus("No screenshot perm!")
                             }
                         }, Handler(Looper.getMainLooper()))
                     }
+                    // Create VirtualDisplay immediately — Android 14 revokes if not done within ~1s
+                    val dm = resources.displayMetrics
+                    val w = dm.widthPixels; val h = dm.heightPixels
+                    imageReader?.close(); virtualDisplay?.release()
+                    imageReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
+                    virtualDisplay = mp.createVirtualDisplay(
+                        "solver", w, h, dm.densityDpi,
+                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                        imageReader!!.surface, null, null
+                    )
+                    mediaProjection = mp
                     setStatus("Ready")
                 } else {
                     setStatus("MP is null!")
                 }
             } catch (e: Exception) {
-                setStatus("MP error: ${e.message?.take(20)}")
+                setStatus("MP err: ${e.message?.take(18)}")
             }
         }
         return START_NOT_STICKY
@@ -191,25 +203,16 @@ class OverlayService : Service() {
     }
 
     private fun captureScreen(): Bitmap? {
-        val dm = resources.displayMetrics
-        val w = dm.widthPixels; val h = dm.heightPixels
+        // VirtualDisplay is kept alive from onStartCommand; just drain stale frames
+        val ir = imageReader ?: return null
+        Thread.sleep(200)  // let current frame arrive
 
-        imageReader?.close(); virtualDisplay?.release()
-
-        imageReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
-        virtualDisplay = mediaProjection!!.createVirtualDisplay(
-            "solver", w, h, dm.densityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader!!.surface, null, null
-        )
-
-        Thread.sleep(300)  // let first frame arrive
-
-        val image = imageReader!!.acquireLatestImage() ?: run {
+        val image = ir.acquireLatestImage() ?: run {
             Thread.sleep(500)
-            imageReader!!.acquireLatestImage()
+            ir.acquireLatestImage()
         } ?: return null
 
+        val w = image.width; val h = image.height
         val planes = image.planes[0]
         val buf = planes.buffer
         val rowStride = planes.rowStride
