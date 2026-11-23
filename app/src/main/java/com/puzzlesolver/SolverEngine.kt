@@ -214,22 +214,40 @@ object SolverEngine {
         return if (merged in 6..13) merged else null
     }
 
-    // Sample cell center (matches Python sample_cell)
+    // Sample cell using 3×3 grid of points, return median channel values
+    // Using median avoids bird-icon pixels dominating a single-cell sample
     private fun sampleCell(rgb: Mat, cx: Int, cy: Int, q: Int): Triple<Double,Double,Double> {
         val w = rgb.cols(); val h = rgb.rows()
-        val offsets = listOf(0 to 0, -q to -q, q to -q, -q to q, q to q)
-        data class S(val r: Double, val g: Double, val b: Double, val score: Double)
-
-        val samples = offsets.map { (dx, dy) ->
+        // 3×3 grid at ±q/2 and ±q offsets
+        val step = maxOf(1, q / 2)
+        val offsets = listOf(
+            -step to -step, 0 to -step, step to -step,
+            -step to  0,    0 to  0,    step to  0,
+            -step to  step, 0 to  step, step to  step
+        )
+        val rs = mutableListOf<Double>()
+        val gs = mutableListOf<Double>()
+        val bs = mutableListOf<Double>()
+        for ((dx, dy) in offsets) {
             val x = (cx + dx).coerceIn(0, w - 1)
             val y = (cy + dy).coerceIn(0, h - 1)
             val p = px(rgb, y, x)
-            S(p[0], p[1], p[2],
-              minOf(pixDist(p[0], p[1], p[2], BEIGE), pixDist(p[0], p[1], p[2], WHITE)))
+            if (isColorful(p[0], p[1], p[2])) {
+                rs += p[0]; gs += p[1]; bs += p[2]
+            }
         }
-        val valid = samples.filter { isColorful(it.r, it.g, it.b) }
-        val best = (valid.ifEmpty { samples }).maxByOrNull { it.score }!!
-        return Triple(best.r, best.g, best.b)
+        // Fallback to all samples if none were colorful
+        if (rs.isEmpty()) {
+            for ((dx, dy) in offsets) {
+                val x = (cx + dx).coerceIn(0, w - 1)
+                val y = (cy + dy).coerceIn(0, h - 1)
+                val p = px(rgb, y, x)
+                rs += p[0]; gs += p[1]; bs += p[2]
+            }
+        }
+        rs.sort(); gs.sort(); bs.sort()
+        val mid = rs.size / 2
+        return Triple(rs[mid], gs[mid], bs[mid])
     }
 
     private fun colorDist(a: Triple<Double,Double,Double>, b: Triple<Double,Double,Double>): Double {
@@ -358,6 +376,9 @@ object SolverEngine {
             sampleCell(rgb, cx, cy, q)
         }}
         val (centers, colorGrid) = clusterColors(raw, bestN, COLOR_MERGE)
+        // Log the detected grid so you can verify rows/columns in logcat
+        for (r in 0 until bestN)
+            Log.i(TAG, "row[$r]: ${colorGrid[r].toList()}")
         Log.i(TAG, "Solving N=$bestN grid with ${centers.size} colors")
 
         val solution = solve(colorGrid, bestN)
