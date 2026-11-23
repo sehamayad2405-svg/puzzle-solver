@@ -104,6 +104,15 @@ object SolverEngine {
             )
         }
 
+        // Enforce square grid: N×N grid has equal width and height
+        val gw2 = result[2] - result[0]
+        val gh2 = result[3] - result[1]
+        if (gh2 > gw2 * 1.15) {
+            // Too tall — crop height to match width (extra height = UI below grid)
+            result[3] = result[1] + gw2
+            Log.w(TAG, "Grid was non-square (${gw2}x${gh2}), cropped to square")
+        }
+
         rgb.release(); mask.release(); dilated.release(); kernel.release(); hierarchy.release()
         Log.i(TAG, "Grid bounds: (${result[0]},${result[1]})->(${result[2]},${result[3]})  " +
               "size=${result[2]-result[0]}x${result[3]-result[1]}")
@@ -315,10 +324,12 @@ object SolverEngine {
 
         val edgeN = detectNFromEdges(rgb, gx1, gy1, gx2, bounds[3])
         val dotN  = countProgressDots(rgb, gy1)
+        // Trust dotN only if it's close to edgeN (within 3); otherwise it's a false detection
         val initN = when {
-            edgeN == dotN -> edgeN
-            dotN != null  -> dotN
-            else          -> edgeN
+            dotN == null                    -> edgeN
+            edgeN == dotN                   -> edgeN
+            abs(edgeN - dotN) <= 3          -> dotN
+            else                            -> edgeN
         }
         Log.i(TAG, "N detection: edgeN=$edgeN  dotN=$dotN  → initN=$initN")
 
