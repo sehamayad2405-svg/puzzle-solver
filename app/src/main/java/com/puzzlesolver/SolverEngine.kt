@@ -224,10 +224,12 @@ object SolverEngine {
                 if (uniq.none { colorDist(col, it) < 40f }) uniq += col
             val diff = kotlin.math.abs(uniq.size - tryN)
             Log.d(TAG, "tryN=$tryN  uniqueColors=${uniq.size}  diff=$diff  cellSize=${cell0}px")
-            if (diff < bestDiff) { bestDiff = diff; bestN = tryN }
-            // No early break — always evaluate all candidates to avoid false N=8 match
+            // Tiebreaker: when diff ties, prefer N closest to initN (brightness analysis)
+            val better = diff < bestDiff ||
+                (diff == bestDiff && abs(tryN - initN) < abs(bestN - initN))
+            if (better) { bestDiff = diff; bestN = tryN }
         }
-        Log.i(TAG, "Final N=$bestN  bestDiff=$bestDiff")
+        Log.i(TAG, "Final N=$bestN  bestDiff=$bestDiff  initN=$initN")
 
         val n    = bestN
         val cell = (gx2 - gx1) / n
