@@ -341,14 +341,9 @@ object SolverEngine {
 
         val edgeN = detectNFromEdges(rgb, gx1, gy1, gx2, bounds[3])
         val dotN  = countProgressDots(rgb, gy1)
-        // Trust dotN only if it's close to edgeN; otherwise it's a false detection
-        val initN = when {
-            dotN == null                                   -> edgeN
-            edgeN == dotN                                  -> edgeN
-            abs(edgeN - dotN) <= Config.dotNTolerance      -> dotN
-            else                                           -> edgeN
-        }
-        Log.i(TAG, "N detection: edgeN=$edgeN  dotN=$dotN  → initN=$initN")
+        // Always use edgeN — dotN (HoughCircles) consistently mis-detects game icons as dots
+        val initN = edgeN
+        Log.i(TAG, "N detection: edgeN=$edgeN  dotN=$dotN  → initN=$initN (dotN ignored)")
 
         Log.i(TAG, "Config: ${Config.summary()}")
         var bestN = initN; var bestDiff = Int.MAX_VALUE
@@ -376,9 +371,16 @@ object SolverEngine {
             sampleCell(rgb, cx, cy, q)
         }}
         val (centers, colorGrid) = clusterColors(raw, bestN, Config.colorMerge.toDouble())
-        // Log the detected grid so you can verify rows/columns in logcat
-        for (r in 0 until bestN)
-            Log.i(TAG, "row[$r]: ${colorGrid[r].toList()}")
+        // Log each cell: row, col, center XY on screen, and color id
+        Log.i(TAG, "cellSize=${cs}px  q=$q")
+        for (r in 0 until bestN) {
+            val coords = (0 until bestN).joinToString("  ") { c ->
+                val cx = gx1 + c * cs + cs / 2
+                val cy = gy1 + r * cs + cs / 2
+                "c$c(${cx},${cy})=${colorGrid[r][c]}"
+            }
+            Log.i(TAG, "row[$r]: $coords")
+        }
         Log.i(TAG, "Solving N=$bestN grid with ${centers.size} colors")
 
         val solution = solve(colorGrid, bestN)
@@ -396,6 +398,7 @@ object SolverEngine {
                 val (r, c) = pos
                 gx1 + c * cs + cs / 2 to gy1 + r * cs + cs / 2
             }
+        Log.i(TAG, "Solution taps (${taps.size}): ${taps.joinToString(" → ") { "(${it.first},${it.second})" }}")
 
         rgb.release()
         return SolveResult(taps, bestN, "OK — $bestN×$bestN, ${centers.size} colors")
