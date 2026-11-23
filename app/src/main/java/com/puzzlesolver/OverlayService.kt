@@ -45,10 +45,33 @@ class OverlayService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val code = intent?.getIntExtra(EXTRA_RESULT_CODE, -1) ?: -1
-        val data = intent?.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
+        val data: Intent? = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            intent?.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent?.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
+        }
         if (code != -1 && data != null) {
-            val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            mediaProjection = mgr.getMediaProjection(code, data)
+            try {
+                val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                val mp = mgr.getMediaProjection(code, data)
+                if (mp != null) {
+                    mediaProjection = mp
+                    if (android.os.Build.VERSION.SDK_INT >= 34) {
+                        mp.registerCallback(object : MediaProjection.Callback() {
+                            override fun onStop() {
+                                mediaProjection = null
+                                setStatus("Perm revoked")
+                            }
+                        }, Handler(Looper.getMainLooper()))
+                    }
+                    setStatus("Ready")
+                } else {
+                    setStatus("MP is null!")
+                }
+            } catch (e: Exception) {
+                setStatus("MP error: ${e.message?.take(20)}")
+            }
         }
         return START_NOT_STICKY
     }
@@ -82,7 +105,7 @@ class OverlayService : Service() {
         }
 
         statusText = TextView(this).apply {
-            text = "Ready"
+            text = "No screenshot perm!"
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#80000000"))
             textSize = 10f
