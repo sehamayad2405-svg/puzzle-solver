@@ -44,14 +44,14 @@ class OverlayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val code = intent?.getIntExtra(EXTRA_RESULT_CODE, -1) ?: -1
+        val code = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
         val data: Intent? = if (android.os.Build.VERSION.SDK_INT >= 33) {
             intent?.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
         } else {
             @Suppress("DEPRECATION")
             intent?.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
         }
-        if (code != -1 && data != null) {
+        if (code == android.app.Activity.RESULT_OK && data != null) {
             try {
                 val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 val mp = mgr.getMediaProjection(code, data)
