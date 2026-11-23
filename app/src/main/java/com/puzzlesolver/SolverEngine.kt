@@ -205,7 +205,7 @@ object SolverEngine {
         // Find N by trying candidates: pick where uniqueColors == N
         val initN = detectN(bmp, gx1, gy1, gx2, gy2)
         var bestN = initN; var bestDiff = Int.MAX_VALUE
-        for (tryN in 7..12) {
+        for (tryN in 6..13) {
             val cell0 = (gx2 - gx1) / tryN; val q0 = cell0 / 5
             val rawC = Array(tryN) { r -> Array(tryN) { c ->
                 val cx = gx1 + c * cell0 + cell0 / 2
@@ -214,10 +214,10 @@ object SolverEngine {
             }}
             val uniq = mutableListOf<Triple<Int,Int,Int>>()
             for (row in rawC) for (col in row)
-                if (uniq.none { colorDist(col, it) < 55f }) uniq += col
+                if (uniq.none { colorDist(col, it) < 40f }) uniq += col
             val diff = kotlin.math.abs(uniq.size - tryN)
             if (diff < bestDiff) { bestDiff = diff; bestN = tryN }
-            if (diff == 0) break
+            // No early break — always evaluate all candidates to avoid false N=8 match
         }
 
         val n    = bestN
@@ -240,8 +240,8 @@ object SolverEngine {
                 val d = colorDist(col, ctr)
                 if (d < bestD) { bestD = d; bestId = j }
             }
-            if (bestD < 55f) {
-                val cnt = centers.take(bestId + 1).count { colorDist(col, it) < 55f }
+            if (bestD < 40f) {
+                val cnt = centers.take(bestId + 1).count { colorDist(col, it) < 40f }
                 // Simple running average for center
                 val (or, og, ob) = centers[bestId]
                 centers[bestId] = Triple(
