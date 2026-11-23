@@ -13,7 +13,6 @@ import android.os.*
 import android.text.InputType
 import android.view.*
 import android.widget.*
-import androidx.appcompat.app.AlertDialog
 import androidx.core.app.NotificationCompat
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -218,7 +217,9 @@ class OverlayService : Service() {
             addView(sv)
         }
 
-        val dialog = AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog)
+        // Service has no Activity window — wrap in ContextThemeWrapper so dialog renders correctly
+        val themeCtx = android.view.ContextThemeWrapper(applicationContext, android.R.style.Theme_Material_Light_Dialog)
+        val dialog = android.app.AlertDialog.Builder(themeCtx)
             .setTitle("Solver Config")
             .setView(container)
             .setPositiveButton("Save") { _, _ ->
