@@ -2,7 +2,10 @@ package com.puzzlesolver
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.util.Log
 import kotlin.math.*
+
+private const val TAG = "SolverEngine"
 
 data class SolveResult(
     val tapCoords: List<Pair<Int, Int>>,  // pixel (x,y) to tap for each animal
@@ -112,8 +115,10 @@ object SolverEngine {
         var bestN = 9; var bestScore = Float.NEGATIVE_INFINITY
         for (n in 6..13) {
             val combined = scoreN(vProf, n) / gw + scoreN(hProf, n) / gh
+            Log.d(TAG, "detectN: N=$n score=${"%.4f".format(combined)}")
             if (combined > bestScore) { bestScore = combined; bestN = n }
         }
+        Log.i(TAG, "detectN result: N=$bestN (score=${"%.4f".format(bestScore)})")
         return bestN
     }
 
@@ -201,9 +206,11 @@ object SolverEngine {
         val (gx1, gy1, gx2, gy2) = bounds.let {
             listOf(it[0], it[1], it[2], it[3])
         }
+        Log.i(TAG, "Grid bounds: ($gx1,$gy1)->($gx2,$gy2)  size=${gx2-gx1}x${gy2-gy1}")
 
         // Find N by trying candidates: pick where uniqueColors == N
         val initN = detectN(bmp, gx1, gy1, gx2, gy2)
+        Log.i(TAG, "initN from brightness analysis: $initN")
         var bestN = initN; var bestDiff = Int.MAX_VALUE
         for (tryN in 6..13) {
             val cell0 = (gx2 - gx1) / tryN; val q0 = cell0 / 5
@@ -216,9 +223,11 @@ object SolverEngine {
             for (row in rawC) for (col in row)
                 if (uniq.none { colorDist(col, it) < 40f }) uniq += col
             val diff = kotlin.math.abs(uniq.size - tryN)
+            Log.d(TAG, "tryN=$tryN  uniqueColors=${uniq.size}  diff=$diff  cellSize=$cell0px")
             if (diff < bestDiff) { bestDiff = diff; bestN = tryN }
             // No early break — always evaluate all candidates to avoid false N=8 match
         }
+        Log.i(TAG, "Final N=$bestN  bestDiff=$bestDiff")
 
         val n    = bestN
         val cell = (gx2 - gx1) / n
@@ -253,8 +262,12 @@ object SolverEngine {
             }
         }}
 
+        Log.i(TAG, "Solving N=$n grid with ${centers.size} colors")
         val solution = solve(colorGrid, n)
-            ?: return SolveResult(emptyList(), n, "No solution found (N=$n, colors=${centers.size})")
+        if (solution == null) {
+            Log.e(TAG, "No solution found for N=$n, colors=${centers.size}")
+            return SolveResult(emptyList(), n, "No solution found (N=$n, colors=${centers.size})")
+        }
 
         // Sort by color region size (forced/small regions first)
         val regionSizes = colorGrid.flatMap { it.toList() }
