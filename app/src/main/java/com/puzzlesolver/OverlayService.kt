@@ -135,7 +135,7 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 0; y = 300
+            x = 0; y = 50
         }
 
         // Drag to move
