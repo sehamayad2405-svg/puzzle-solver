@@ -223,7 +223,7 @@ object SolverEngine {
             for (row in rawC) for (col in row)
                 if (uniq.none { colorDist(col, it) < 40f }) uniq += col
             val diff = kotlin.math.abs(uniq.size - tryN)
-            Log.d(TAG, "tryN=$tryN  uniqueColors=${uniq.size}  diff=$diff  cellSize=$cell0px")
+            Log.d(TAG, "tryN=$tryN  uniqueColors=${uniq.size}  diff=$diff  cellSize=${cell0}px")
             if (diff < bestDiff) { bestDiff = diff; bestN = tryN }
             // No early break — always evaluate all candidates to avoid false N=8 match
         }
