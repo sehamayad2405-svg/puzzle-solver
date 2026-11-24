@@ -22,6 +22,8 @@ class OverlayService : Service() {
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         const val CHANNEL_ID = "solver_channel"
+        /** Max candidate configurations to try before giving up (Python MAX_RETRIES). */
+        const val MAX_RETRIES = 15
         var isRunning = false
     }
 
@@ -249,6 +251,11 @@ class OverlayService : Service() {
 
     // ── Screenshot + solve ───────────────────────────────────────────────────
 
+    /**
+     * Full solve pass, mirroring solver.py:
+     *   capture → Continue-dialog check → grid detect → clear board →
+     *   fresh capture → rank all candidate configs → candidate retry loop.
+     */
     private fun triggerSolve() {
         if (TapService.instance == null) {
             setStatus("Enable Accessibility!"); return
@@ -261,28 +268,180 @@ class OverlayService : Service() {
 
         Thread {
             try {
+                // (a) capture
                 val bmp = captureScreen()
                 if (bmp == null) { setStatus("Screenshot failed"); solving.set(false); return@Thread }
 
-                setStatus("Solving...")
-                val result = SolverEngine.analyze(bmp)
-
-                if (result.tapCoords.isEmpty()) {
-                    setStatus(result.status); solving.set(false); return@Thread
+                // (b) out of lives → tap Restart in the Continue dialog, then start over
+                if (SolverEngine.hasContinueDialog(bmp)) {
+                    val svc = TapService.instance
+                    if (svc == null) { setStatus("Enable Accessibility!"); solving.set(false); return@Thread }
+                    val dm = resources.displayMetrics
+                    val rx = dm.widthPixels / 2
+                    val ry = (dm.heightPixels * 0.68).toInt()
+                    setStatus("Continue dialog → Restart")
+                    handler.post {
+                        svc.tap(rx, ry) {
+                            handler.postDelayed({
+                                solving.set(false)
+                                triggerSolve()
+                            }, 1500)
+                        }
+                    }
+                    return@Thread
                 }
 
-                setStatus("Tapping ${result.tapCoords.size} cells...")
-                tapSequence(result.tapCoords) {
-                    setStatus("Done! ${result.status}")
-                    solving.set(false)
-                    // Auto restart after 4 seconds for next level
-                    handler.postDelayed({ triggerSolve() }, 4000)
+                // (c) rank every candidate configuration — ONE sweep per solve.
+                // analyzeAll() masks the whole frame pixel-by-pixel and runs
+                // detectGrid itself, so every extra call visibly stalls the phone.
+                // Its candidates already carry gridBounds, so no separate
+                // detectGrid call is needed here.
+                setStatus("Ranking configs...")
+                val candidates = SolverEngine.analyzeAll(bmp)
+                if (candidates.isEmpty()) {
+                    setStatus("No candidate configs"); solving.set(false); return@Thread
+                }
+                val best = candidates[0]
+
+                // (d) clear leftovers, then (e) run the candidate retry loop.
+                // Tap coordinates depend only on bounds + cellSize, which clearing
+                // does not change, so the ranked list stays valid afterwards.
+                clearBoard(bmp, best.gridBounds, best.n) {
+                    tryCandidate(candidates, 0)
                 }
 
             } catch (e: Exception) {
                 setStatus("Error: ${e.message}"); solving.set(false)
             }
         }.start()
+    }
+
+    /**
+     * Remove animals / X marks left over from a previous run so the solve starts
+     * from an empty grid. Per solver.py: an animal needs 1 tap to return to empty,
+     * an X mark needs 2 taps (X → animal → empty).
+     *
+     * Must be called OFF the main thread (it inspects a bitmap).
+     * [n] comes from the best candidate configuration; a guessed grid would tap
+     * the wrong cells and corrupt a good board, so an untrustworthy n skips
+     * clearing entirely. [onDone] is always invoked, on the main thread.
+     */
+    private fun clearBoard(bmp: Bitmap, bounds: IntArray, n: Int, onDone: () -> Unit) {
+        val svc = TapService.instance
+        if (svc == null) { handler.post { onDone() }; return }
+
+        if (n < 2) { setStatus("Skip clear (no N)"); handler.post { onDone() }; return }
+
+        val cellSize = (bounds[2] - bounds[0]) / n
+        if (cellSize < 10) { setStatus("Skip clear (bad cell)"); handler.post { onDone() }; return }
+
+        val occupied = SolverEngine.getOccupiedCells(
+            bmp, bounds[0], bounds[1], bounds[2], bounds[3], n, cellSize
+        )
+        if (occupied.isEmpty()) { setStatus("Board is clean"); handler.post { onDone() }; return }
+
+        setStatus("Clearing ${occupied.size} cells...")
+
+        fun clearNext(i: Int) {
+            if (i >= occupied.size) {
+                handler.postDelayed({ onDone() }, 400)
+                return
+            }
+            val (cx, cy, state) = occupied[i]
+            val after = { handler.postDelayed({ clearNext(i + 1) }, 400) }
+            if (state == 1) {
+                // X mark: two taps (X → animal → empty); doubleTap is two taps 150ms apart
+                svc.doubleTap(cx, cy) { after() }
+            } else {
+                // Animal: one tap back to empty
+                svc.tap(cx, cy) { after() }
+            }
+        }
+
+        handler.post { clearNext(0) }
+    }
+
+    /**
+     * Try candidate [idx] of the ranked list (solver.py's
+     * `for attempt, cand in enumerate(all_candidates[:MAX_RETRIES])` loop).
+     *
+     * Each cell is double-tapped (empty → X → animal); after every tap the screen
+     * is re-read and checked for a red X. On a red X every cell placed during this
+     * attempt — including the rejected one — is undone in reverse order and the
+     * next candidate is tried. Gestures go on the handler, bitmap work on a
+     * background thread. Must be called on the main thread.
+     */
+    private fun tryCandidate(candidates: List<SolveCandidate>, idx: Int) {
+        if (idx >= candidates.size || idx >= MAX_RETRIES) {
+            setStatus("All configs failed"); solving.set(false); return
+        }
+        val svc = TapService.instance
+        if (svc == null) { setStatus("Enable Accessibility!"); solving.set(false); return }
+
+        val cand = candidates[idx]
+        if (cand.taps.isEmpty()) {
+            handler.post { tryCandidate(candidates, idx + 1) }
+            return
+        }
+
+        val gb = cand.gridBounds
+        if (gb.size < 4) {
+            handler.post { tryCandidate(candidates, idx + 1) }
+            return
+        }
+
+        setStatus("Try ${idx + 1}: N=${cand.n} th=${cand.thresh}")
+
+        // Cells placed during THIS attempt only (solver.py THIS_ATTEMPT_CELLS)
+        val placed = mutableListOf<Pair<Int, Int>>()
+
+        fun undoThenNext(i: Int) {
+            if (i < 0) {
+                placed.clear()
+                handler.postDelayed({ tryCandidate(candidates, idx + 1) }, 500)
+                return
+            }
+            val (ux, uy) = placed[i]
+            // Animal → empty is a single tap
+            svc.tap(ux, uy) {
+                handler.postDelayed({ undoThenNext(i - 1) }, 350)
+            }
+        }
+
+        fun tapNext(i: Int) {
+            if (i >= cand.taps.size) {
+                setStatus("Done!"); solving.set(false); return
+            }
+            val (x, y) = cand.taps[i]
+            // empty → X → animal
+            svc.doubleTap(x, y) {
+                handler.postDelayed({
+                    Thread {
+                        var red = false
+                        try {
+                            val chk = captureScreen()
+                            red = chk != null &&
+                                SolverEngine.hasRedX(chk, x, y, gb[0], gb[1], gb[2], gb[3])
+                        } catch (e: Exception) {
+                            red = false
+                        }
+                        val sawRedX = red
+                        handler.post {
+                            // The rejected cell was tapped too, so it must be undone as well
+                            placed.add(x to y)
+                            if (sawRedX) {
+                                setStatus("Red X on try ${idx + 1} — undoing")
+                                undoThenNext(placed.size - 1)
+                            } else {
+                                tapNext(i + 1)
+                            }
+                        }
+                    }.start()
+                }, 500)
+            }
+        }
+
+        handler.post { tapNext(0) }
     }
 
     private fun captureScreen(): Bitmap? {
@@ -315,18 +474,6 @@ class OverlayService : Service() {
         }
         image.close()
         return bmp
-    }
-
-    private fun tapSequence(coords: List<Pair<Int,Int>>, onFinished: () -> Unit) {
-        val svc = TapService.instance ?: return
-        fun tapNext(idx: Int) {
-            if (idx >= coords.size) { onFinished(); return }
-            val (x, y) = coords[idx]
-            svc.doubleTap(x, y) {
-                handler.postDelayed({ tapNext(idx + 1) }, 650)
-            }
-        }
-        handler.post { tapNext(0) }
     }
 
     // ── Notification ─────────────────────────────────────────────────────────
